@@ -111,7 +111,6 @@ class EmailQueue(Document):
 		""" Send emails to recipients.
 		"""
 		if not self.can_send_now():
-			frappe.db.rollback()
 			return
 
 		with SendMailContext(self, is_background_task) as ctx:
@@ -221,9 +220,9 @@ class SendMailContext:
 
 	def message_placeholder(self, placeholder_key):
 		map = {
-			'tracker': '<!--email open check-->',
-			'unsubscribe_url': '<!--unsubscribe url-->',
-			'cc': '<!--cc message-->',
+			'tracker': '<!--email_open_check-->',
+			'unsubscribe_url': '<!--unsubscribe_url-->',
+			'cc': '<!--cc_message-->',
 			'recipient': '<!--recipient-->',
 		}
 		return map.get(placeholder_key)
@@ -479,21 +478,24 @@ class QueueBuilder:
 
 		EmailUnsubscribe = DocType("Email Unsubscribe")
 
-		unsubscribed = (
-			frappe.qb.from_(EmailUnsubscribe).select(
-				EmailUnsubscribe.email
-			).where(
-				EmailUnsubscribe.email.isin(all_ids)
-				& (
-					(
-						(EmailUnsubscribe.reference_doctype == self.reference_doctype)
-						& (EmailUnsubscribe.reference_name == self.reference_name)
-					) | (
-						EmailUnsubscribe.global_unsubscribe == 1
+		if len(all_ids) > 0:
+			unsubscribed = (
+				frappe.qb.from_(EmailUnsubscribe).select(
+					EmailUnsubscribe.email
+				).where(
+					EmailUnsubscribe.email.isin(all_ids)
+					& (
+						(
+							(EmailUnsubscribe.reference_doctype == self.reference_doctype)
+							& (EmailUnsubscribe.reference_name == self.reference_name)
+						) | (
+							EmailUnsubscribe.global_unsubscribe == 1
+						)
 					)
-				)
-			).distinct()
-		).run(pluck=True)
+				).distinct()
+			).run(pluck=True)
+		else:
+			unsubscribed = None
 
 		self._unsubscribed_user_emails = unsubscribed or []
 		return self._unsubscribed_user_emails

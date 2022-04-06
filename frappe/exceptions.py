@@ -103,9 +103,13 @@ class DocumentAlreadyRestored(ValidationError): pass
 class AttachmentLimitReached(ValidationError): pass
 class QueryTimeoutError(Exception): pass
 class QueryDeadlockError(Exception): pass
+class TooManyWritesError(Exception): pass
 # OAuth exceptions
 class InvalidAuthorizationHeader(CSRFTokenError): pass
 class InvalidAuthorizationPrefix(CSRFTokenError): pass
 class InvalidAuthorizationToken(CSRFTokenError): pass
 class InvalidDatabaseFile(ValidationError): pass
 class ExecutableNotFound(FileNotFoundError): pass
+
+class InvalidRemoteException(Exception):
+	pass

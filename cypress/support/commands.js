@@ -110,34 +110,6 @@ Cypress.Commands.add('get_doc', (doctype, name) => {
 		});
 });
 
-Cypress.Commands.add('insert_doc', (doctype, args, ignore_duplicate) => {
-	return cy
-		.window()
-		.its('frappe.csrf_token')
-		.then(csrf_token => {
-			return cy
-				.request({
-					method: 'POST',
-					url: `/api/resource/${doctype}`,
-					body: args,
-					headers: {
-						Accept: 'application/json',
-						'Content-Type': 'application/json',
-						'X-Frappe-CSRF-Token': csrf_token
-					},
-					failOnStatusCode: !ignore_duplicate
-				})
-				.then(res => {
-					let status_codes = [200];
-					if (ignore_duplicate) {
-						status_codes.push(409);
-					}
-					expect(res.status).to.be.oneOf(status_codes);
-					return res.body;
-				});
-		});
-});
-
 Cypress.Commands.add('remove_doc', (doctype, name) => {
 	return cy
 		.window()
@@ -228,16 +200,15 @@ Cypress.Commands.add('fill_table_field', (tablefieldname, row_idx, fieldname, va
 Cypress.Commands.add('get_table_field', (tablefieldname, row_idx, fieldname, fieldtype = 'Data') => {
 	let selector = `.frappe-control[data-fieldname="${tablefieldname}"]`;
 	selector += ` [data-idx="${row_idx}"]`;
-	selector += ` .form-in-grid`;
 
 	if (fieldtype === 'Text Editor') {
 		selector += ` [data-fieldname="${fieldname}"] .ql-editor[contenteditable=true]`;
 	} else if (fieldtype === 'Code') {
 		selector += ` [data-fieldname="${fieldname}"] .ace_text-input`;
 	} else {
-		selector += ` .form-control[data-fieldname="${fieldname}"]`;
+		selector += ` [data-fieldname="${fieldname}"]`;
+		return cy.get(selector).find('.form-control:visible, .static-area:visible').first();
 	}
-
 	return cy.get(selector);
 });
 
@@ -318,6 +289,7 @@ Cypress.Commands.add('add_filter', () => {
 });
 
 Cypress.Commands.add('clear_filters', () => {
+	let has_filter = false;
 	cy.intercept({
 		method: 'POST',
 		url: 'api/method/frappe.model.utils.user_settings.save'
@@ -325,12 +297,17 @@ Cypress.Commands.add('clear_filters', () => {
 	cy.get('.filter-section .filter-button').click({force: true});
 	cy.wait(300);
 	cy.get('.filter-popover').should('exist');
+	cy.get('.filter-popover').then(popover => {
+		if (popover.find('input.input-with-feedback')[0].value != '') {
+			has_filter = true;
+		}
+	});
 	cy.get('.filter-popover').find('.clear-filters').click();
 	cy.get('.filter-section .filter-button').click();
 	cy.window().its('cur_list').then(cur_list => {
 		cur_list && cur_list.filter_area && cur_list.filter_area.clear();
+		has_filter && cy.wait('@filter-saved');
 	});
-	cy.wait('@filter-saved');
 });
 
 Cypress.Commands.add('click_modal_primary_button', (btn_name) => {

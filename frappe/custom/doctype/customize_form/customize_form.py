@@ -67,7 +67,12 @@ class CustomizeForm(Document):
 			self.set(prop, meta.get(prop))
 
 		for d in meta.get("fields"):
-			new_d = {"fieldname": d.fieldname, "is_custom_field": d.get("is_custom_field"), "name": d.name}
+			new_d = {
+				"fieldname": d.fieldname,
+				"is_custom_field": d.get("is_custom_field"),
+				"is_system_generated": d.get("is_system_generated"),
+				"name": d.name
+			}
 			for prop in docfield_properties:
 				new_d[prop] = d.get(prop)
 			self.append("fields", new_d)
@@ -402,7 +407,7 @@ class CustomizeForm(Document):
 			"property": prop,
 			"value": value,
 			"property_type": property_type
-		})
+		}, is_system_generated=False)
 
 	def get_existing_property_value(self, property_name, fieldname=None):
 		# check if there is any need to make property setter!
@@ -418,6 +423,9 @@ class CustomizeForm(Document):
 		return property_value
 
 	def validate_fieldtype_change(self, df, old_value, new_value):
+		if df.is_virtual:
+			return
+
 		allowed = self.allow_fieldtype_change(old_value, new_value)
 		if allowed:
 			old_value_length = cint(frappe.db.type_map.get(old_value)[1])
@@ -430,7 +438,8 @@ class CustomizeForm(Document):
 				self.validate_fieldtype_length()
 			else:
 				self.flags.update_db = True
-		if not allowed:
+
+		else:
 			frappe.throw(_("Fieldtype cannot be changed from {0} to {1} in row {2}").format(old_value, new_value, df.idx))
 
 	def validate_fieldtype_length(self):
@@ -483,11 +492,20 @@ def reset_customization(doctype):
 	setters = frappe.get_all("Property Setter", filters={
 		'doc_type': doctype,
 		'field_name': ['!=', 'naming_series'],
-		'property': ['!=', 'options']
+		'property': ['!=', 'options'],
+		'is_system_generated': False
 	}, pluck='name')
 
 	for setter in setters:
 		frappe.delete_doc("Property Setter", setter)
+
+	custom_fields = frappe.get_all("Custom Field", filters={
+		'dt': doctype,
+		'is_system_generated': False
+	}, pluck='name')
+
+	for field in custom_fields:
+		frappe.delete_doc("Custom Field", field)
 
 	frappe.clear_cache(doctype=doctype)
 
@@ -512,7 +530,8 @@ doctype_properties = {
 	'email_append_to': 'Check',
 	'subject_field': 'Data',
 	'sender_field': 'Data',
-	'autoname': 'Data'
+	'autoname': 'Data',
+	'show_title_field_in_link': 'Check'
 }
 
 docfield_properties = {
@@ -535,6 +554,7 @@ docfield_properties = {
 	'in_global_search': 'Check',
 	'in_preview': 'Check',
 	'bold': 'Check',
+	'no_copy': 'Check',
 	'hidden': 'Check',
 	'collapsible': 'Check',
 	'collapsible_depends_on': 'Data',
@@ -558,7 +578,8 @@ docfield_properties = {
 	'allow_in_quick_entry': 'Check',
 	'hide_border': 'Check',
 	'hide_days': 'Check',
-	'hide_seconds': 'Check'
+	'hide_seconds': 'Check',
+	'is_virtual': 'Check',
 }
 
 doctype_link_properties = {
@@ -593,4 +614,4 @@ ALLOWED_FIELDTYPE_CHANGE = (
 	('Code', 'Geolocation'),
 	('Table', 'Table MultiSelect'))
 
-ALLOWED_OPTIONS_CHANGE = ('Read Only', 'HTML', 'Select', 'Data')
+ALLOWED_OPTIONS_CHANGE = ('Read Only', 'HTML', 'Data')

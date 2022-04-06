@@ -4,6 +4,7 @@
 import unittest
 import frappe
 from frappe.core.doctype.data_import.importer import Importer
+from frappe.tests.test_query_builder import db_type_is, run_only_if
 from frappe.utils import getdate, format_duration
 
 doctype_name = 'DocType for Import'
@@ -54,21 +55,27 @@ class TestImporter(unittest.TestCase):
 		self.assertEqual(len(preview.data), 4)
 		self.assertEqual(len(preview.columns), 16)
 
+	# ignored on postgres because myisam doesn't exist on pg
+	@run_only_if(db_type_is.MARIADB)
 	def test_data_import_without_mandatory_values(self):
 		import_file = get_import_file('sample_import_file_without_mandatory')
 		data_import = self.get_importer(doctype_name, import_file)
 		frappe.local.message_log = []
 		data_import.start_import()
 		data_import.reload()
-		import_log = frappe.parse_json(data_import.import_log)
-		self.assertEqual(import_log[0]['row_indexes'], [2,3])
-		expected_error = "Error: <strong>Child 1 of DocType for Import</strong> Row #1: Value missing for: Child Title"
-		self.assertEqual(frappe.parse_json(import_log[0]['messages'][0])['message'], expected_error)
-		expected_error = "Error: <strong>Child 1 of DocType for Import</strong> Row #2: Value missing for: Child Title"
-		self.assertEqual(frappe.parse_json(import_log[0]['messages'][1])['message'], expected_error)
 
-		self.assertEqual(import_log[1]['row_indexes'], [4])
-		self.assertEqual(frappe.parse_json(import_log[1]['messages'][0])['message'], "Title is required")
+		import_log = frappe.db.get_all("Data Import Log", fields=["row_indexes", "success", "messages", "exception", "docname"],
+			filters={"data_import": data_import.name},
+			order_by="log_index")
+
+		self.assertEqual(frappe.parse_json(import_log[0]['row_indexes']), [2,3])
+		expected_error = "Error: <strong>Child 1 of DocType for Import</strong> Row #1: Value missing for: Child Title"
+		self.assertEqual(frappe.parse_json(frappe.parse_json(import_log[0]['messages'])[0])['message'], expected_error)
+		expected_error = "Error: <strong>Child 1 of DocType for Import</strong> Row #2: Value missing for: Child Title"
+		self.assertEqual(frappe.parse_json(frappe.parse_json(import_log[0]['messages'])[1])['message'], expected_error)
+
+		self.assertEqual(frappe.parse_json(import_log[1]['row_indexes']), [4])
+		self.assertEqual(frappe.parse_json(frappe.parse_json(import_log[1]['messages'])[0])['message'], "Title is required")
 
 	def test_data_import_update(self):
 		existing_doc = frappe.get_doc(
@@ -85,11 +92,18 @@ class TestImporter(unittest.TestCase):
 
 		# update child table id in template date
 		i.import_file.raw_data[1][4] = existing_doc.table_field_1[0].name
-		i.import_file.raw_data[1][0] = existing_doc.name
+
+		# uppercase to check if autoname field isn't replaced in mariadb
+		if frappe.db.db_type == "mariadb":
+			i.import_file.raw_data[1][0] = existing_doc.name.upper()
+		else:
+			i.import_file.raw_data[1][0] = existing_doc.name
+
 		i.import_file.parse_data_from_template()
 		i.import_data()
 
 		updated_doc = frappe.get_doc(doctype_name, existing_doc.name)
+		self.assertEqual(existing_doc.title, updated_doc.title)
 		self.assertEqual(updated_doc.description, 'test description')
 		self.assertEqual(updated_doc.table_field_1[0].child_title, 'child title')
 		self.assertEqual(updated_doc.table_field_1[0].name, existing_doc.table_field_1[0].name)

@@ -1,15 +1,19 @@
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: MIT. See LICENSE
 
+import textwrap
+
 import frappe, json, os
-import unittest
-from frappe.desk.query_report import run, save_report
+from frappe.desk.query_report import run, save_report, add_total_row
+from frappe.desk.reportview import delete_report, save_report as _save_report
 from frappe.custom.doctype.customize_form.customize_form import reset_customization
+from frappe.core.doctype.user_permission.test_user_permission import create_user
+from frappe.tests.utils import FrappeTestCase
 
 test_records = frappe.get_test_records('Report')
 test_dependencies = ['User']
 
-class TestReport(unittest.TestCase):
+class TestReport(FrappeTestCase):
 	def test_report_builder(self):
 		if frappe.db.exists('Report', 'User Activity Report'):
 			frappe.delete_doc('Report', 'User Activity Report')
@@ -29,6 +33,60 @@ class TestReport(unittest.TestCase):
 		self.assertEqual(columns[0].get('label'), 'Name')
 		self.assertEqual(columns[1].get('label'), 'Module')
 		self.assertTrue('User' in [d.get('name') for d in data])
+
+	def test_save_or_delete_report(self):
+		'''Test for validations when editing / deleting report of type Report Builder'''
+
+		try:
+			report = frappe.get_doc({
+				'doctype': 'Report',
+				'ref_doctype': 'User',
+				'report_name': 'Test Delete Report',
+				'report_type': 'Report Builder',
+				'is_standard': 'No',
+			}).insert()
+
+			# Check for PermissionError
+			create_user("test_report_owner@example.com", "Website Manager")
+			frappe.set_user("test_report_owner@example.com")
+			self.assertRaises(frappe.PermissionError, delete_report, report.name)
+
+			# Check for Report Type
+			frappe.set_user("Administrator")
+			report.db_set("report_type", "Custom Report")
+			self.assertRaisesRegex(
+				frappe.ValidationError,
+				"Only reports of type Report Builder can be deleted",
+				delete_report,
+				report.name
+			)
+
+			# Check if creating and deleting works with proper validations
+			frappe.set_user("test@example.com")
+			report_name = _save_report(
+				'Dummy Report',
+				'User',
+				json.dumps([{
+					'fieldname': 'email',
+					'fieldtype': 'Data',
+					'label': 'Email',
+					'insert_after_index': 0,
+					'link_field': 'name',
+					'doctype': 'User',
+					'options': 'Email',
+					'width': 100,
+					'id':'email',
+					'name': 'Email'
+				}])
+			)
+
+			doc = frappe.get_doc("Report", report_name)
+			delete_report(doc.name)
+
+		finally:
+			frappe.set_user("Administrator")
+			frappe.db.rollback()
+
 
 	def test_custom_report(self):
 		reset_customization('User')
@@ -226,3 +284,82 @@ result = [
 
 		# Set user back to administrator
 		frappe.set_user('Administrator')
+
+	def test_add_total_row_for_tree_reports(self):
+		report_settings = {
+			'tree': True,
+			'parent_field': 'parent_value'
+		}
+
+		columns = [
+			{
+				"fieldname": "parent_column",
+				"label": "Parent Column",
+				"fieldtype": "Data",
+				"width": 10
+			},
+			{
+				"fieldname": "column_1",
+				"label": "Column 1",
+				"fieldtype": "Float",
+				"width": 10
+			},
+			{
+				"fieldname": "column_2",
+				"label": "Column 2",
+				"fieldtype": "Float",
+				"width": 10
+			}
+		]
+
+		result = [
+			{
+				"parent_column": "Parent 1",
+				"column_1": 200,
+				"column_2": 150.50
+			},
+			{
+				"parent_column": "Child 1",
+				"column_1": 100,
+				"column_2": 75.25,
+				"parent_value": "Parent 1"
+			},
+			{
+				"parent_column": "Child 2",
+				"column_1": 100,
+				"column_2": 75.25,
+				"parent_value": "Parent 1"
+			}
+		]
+
+		result = add_total_row(result, columns, meta=None, is_tree=report_settings['tree'],
+			parent_field=report_settings['parent_field'])
+		self.assertEqual(result[-1][0], "Total")
+		self.assertEqual(result[-1][1], 200)
+		self.assertEqual(result[-1][2], 150.50)
+
+	def test_cte_in_query_report(self):
+		cte_query = textwrap.dedent("""
+			with enabled_users as (
+				select name
+				from `tabUser`
+				where enabled = 1
+			)
+			select * from enabled_users;
+		""")
+
+		report = frappe.get_doc({
+			"doctype": "Report",
+			"ref_doctype": "User",
+			"report_name": "Enabled Users List",
+			"report_type": "Query Report",
+			"is_standard": "No",
+			"query": cte_query,
+		}).insert()
+
+		if frappe.db.db_type == "mariadb":
+			col, rows = report.execute_query_report(filters={})
+			self.assertEqual(col[0], "name")
+			self.assertGreaterEqual(len(rows), 1)
+		elif frappe.db.db_type == "postgres":
+			self.assertRaises(frappe.PermissionError, report.execute_query_report, filters={})

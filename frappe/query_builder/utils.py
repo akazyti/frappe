@@ -1,16 +1,16 @@
 from enum import Enum
-from typing import Any, Callable, Dict, Union, get_type_hints
 from importlib import import_module
+from typing import Any, Callable, Dict, Union, get_type_hints
 
 from pypika import Query
 from pypika.queries import Column
-
-import frappe
-
-from .builder import MariaDB, Postgres
 from pypika.terms import PseudoColumn
 
+import frappe
 from frappe.query_builder.terms import NamedParameterWrapper
+
+from .builder import MariaDB, Postgres
+
 
 class db_type_is(Enum):
 	MARIADB = "mariadb"
@@ -54,16 +54,37 @@ def patch_query_execute():
 	This excludes the use of `frappe.db.sql` method while
 	executing the query object
 	"""
+	from frappe.utils.safe_exec import check_safe_sql_query
+
+
 	def execute_query(query, *args, **kwargs):
 		query, params = prepare_query(query)
 		return frappe.db.sql(query, params, *args, **kwargs) # nosemgrep
 
 	def prepare_query(query):
-		params = {}
-		query = query.get_sql(param_wrapper = NamedParameterWrapper(params))
-		if frappe.flags.in_safe_exec and not query.lower().strip().startswith("select"):
-			raise frappe.PermissionError('Only SELECT SQL allowed in scripting')
-		return query, params
+		import inspect
+
+		param_collector = NamedParameterWrapper()
+		query = query.get_sql(param_wrapper=param_collector)
+		if frappe.flags.in_safe_exec and not check_safe_sql_query(query, throw=False):
+			callstack = inspect.stack()
+			if len(callstack) >= 3 and ".py" in callstack[2].filename:
+				# ignore any query builder methods called from python files
+				# assumption is that those functions are whitelisted already.
+
+				# since query objects are patched everywhere any query.run()
+				# will have callstack like this:
+				# frame0: this function prepare_query()
+				# frame1: execute_query()
+				# frame2: frame that called `query.run()`
+				#
+				# if frame2 is server script it wont have a filename and hence
+				# it shouldn't be allowed.
+				# p.s. stack() returns `"<unknown>"` as filename if not a file.
+				pass
+			else:
+				raise frappe.PermissionError('Only SELECT SQL allowed in scripting')
+		return query, param_collector.get_parameters()
 
 	query_class = get_attr(str(frappe.qb).split("'")[1])
 	builder_class = get_type_hints(query_class._builder).get('return')
@@ -78,7 +99,7 @@ def patch_query_execute():
 def patch_query_aggregation():
 	"""Patch aggregation functions to frappe.qb
 	"""
-	from frappe.query_builder.functions import _max, _min, _avg, _sum
+	from frappe.query_builder.functions import _avg, _max, _min, _sum
 
 	frappe.qb.max = _max
 	frappe.qb.min = _min
