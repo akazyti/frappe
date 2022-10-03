@@ -1,15 +1,13 @@
-#  -*- coding: utf-8 -*-
-
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: MIT. See LICENSE
 
 import frappe
-import unittest
+from frappe.tests.utils import FrappeTestCase
 
 test_records = frappe.get_test_records("Custom Field")
 
 
-class TestCustomField(unittest.TestCase):
+class TestCustomField(FrappeTestCase):
 	def test_create_custom_fields(self):
 		from .custom_field import create_custom_fields
 
@@ -36,12 +34,6 @@ class TestCustomField(unittest.TestCase):
 
 		frappe.db.commit()
 
-		self.assertTrue(
-			frappe.db.exists("Custom Field", "Address-_test_custom_field_1")
-		)
-		self.assertTrue(
-			frappe.db.exists("Custom Field", "Address-_test_custom_field_2")
-		)
-		self.assertTrue(
-			frappe.db.exists("Custom Field", "Contact-_test_custom_field_2")
-		)
+		self.assertTrue(frappe.db.exists("Custom Field", "Address-_test_custom_field_1"))
+		self.assertTrue(frappe.db.exists("Custom Field", "Address-_test_custom_field_2"))
+		self.assertTrue(frappe.db.exists("Custom Field", "Contact-_test_custom_field_2"))
